@@ -2,6 +2,7 @@
 // ENV CONFIG — Zod-validated environment variables
 // Fails fast at startup if any required var is missing/invalid
 // ================================================================
+import 'dotenv/config';
 import { z } from 'zod';
 
 const envSchema = z.object({
