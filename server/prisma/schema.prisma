@@ -1,0 +1,240 @@
+// ================================================================
+// CERTIVERIFY — Prisma Schema (PostgreSQL)
+// 8 tables: institutions, users, key_pairs, modules,
+//           user_modules, certificates, verification_logs, audit_trail
+// ================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ────────────────────────────────────────────────────────────────
+// Institution — Organisme habilité à émettre des certificats
+// ────────────────────────────────────────────────────────────────
+model Institution {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @db.VarChar(255)
+  domain    String   @unique @db.VarChar(255) // ex: "sorbonne.fr"
+  logoUrl   String?  @map("logo_url")
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  users        User[]
+  keyPairs     KeyPair[]
+  modules      Module[]
+  certificates Certificate[]
+
+  @@map("institutions")
+}
+
+// ────────────────────────────────────────────────────────────────
+// User — Admin, étudiant ou vérificateur
+// Mot de passe = bcrypt hash (cost 12), JAMAIS en clair
+// ────────────────────────────────────────────────────────────────
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  institutionId String?   @map("institution_id") @db.Uuid
+  email         String    @unique @db.VarChar(255)
+  passwordHash  String    @map("password_hash") @db.VarChar(255)
+  fullName      String    @map("full_name") @db.VarChar(255)
+  role          UserRole  @default(student)
+  isActive      Boolean   @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  // Refresh token for JWT rotation
+  refreshToken  String?   @map("refresh_token") @db.VarChar(512)
+
+  institution          Institution?  @relation(fields: [institutionId], references: [id], onDelete: SetNull)
+  userModules          UserModule[]
+  receivedCertificates Certificate[] @relation("StudentCertificates")
+  issuedCertificates   Certificate[] @relation("IssuerCertificates")
+  auditTrail           AuditTrail[]
+
+  @@index([email])
+  @@index([institutionId])
+  @@map("users")
+}
+
+enum UserRole {
+  admin
+  student
+  verifier
+
+  @@map("user_role")
+}
+
+// ────────────────────────────────────────────────────────────────
+// KeyPair — Paire RSA-2048 par institution
+// La clé privée est stockée chiffrée (reference HSM en production)
+// ────────────────────────────────────────────────────────────────
+model KeyPair {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  institutionId String    @map("institution_id") @db.Uuid
+  publicKeyPem  String    @map("public_key_pem") @db.Text
+  // En dev: clé privée PEM chiffrée. En prod: référence HSM/Vault
+  privateKeyRef String    @map("private_key_ref") @db.Text
+  algorithm     String    @default("RSA-SHA256") @db.VarChar(50)
+  keySize       Int       @default(2048) @map("key_size")
+  isActive      Boolean   @default(true) @map("is_active")
+  expiresAt     DateTime? @map("expires_at") @db.Timestamptz
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  institution  Institution   @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  certificates Certificate[]
+
+  @@index([institutionId])
+  @@map("key_pairs")
+}
+
+// ────────────────────────────────────────────────────────────────
+// Module — Unité de formation dans un cursus
+// ────────────────────────────────────────────────────────────────
+model Module {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  institutionId String   @map("institution_id") @db.Uuid
+  title         String   @db.VarChar(255)
+  description   String?  @db.Text
+  creditHours   Int      @default(0) @map("credit_hours")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  institution Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  userModules UserModule[]
+
+  @@map("modules")
+}
+
+// ────────────────────────────────────────────────────────────────
+// UserModule — Progression M:N (étudiant ↔ module)
+// ────────────────────────────────────────────────────────────────
+model UserModule {
+  userId      String          @map("user_id") @db.Uuid
+  moduleId    String          @map("module_id") @db.Uuid
+  status      ModuleStatus    @default(enrolled)
+  completedAt DateTime?       @map("completed_at") @db.Timestamptz
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module Module @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+
+  @@id([userId, moduleId])
+  @@map("user_modules")
+}
+
+enum ModuleStatus {
+  enrolled
+  in_progress
+  completed
+
+  @@map("module_status")
+}
+
+// ────────────────────────────────────────────────────────────────
+// Certificate — Cœur du système: diplôme signé numériquement
+// ────────────────────────────────────────────────────────────────
+model Certificate {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  certificateUid  String    @unique @map("certificate_uid") @db.VarChar(12)
+  studentId       String    @map("student_id") @db.Uuid
+  institutionId   String    @map("institution_id") @db.Uuid
+  issuedBy        String    @map("issued_by") @db.Uuid
+  keyPairId       String    @map("key_pair_id") @db.Uuid
+
+  // Données du certificat
+  title           String    @db.VarChar(500)
+  studentName     String    @map("student_name") @db.VarChar(255)
+  description     String?   @db.Text
+
+  // Sécurité cryptographique
+  documentHash    String    @map("document_hash") @db.VarChar(128) // SHA-256 hex
+  digitalSignature String   @map("digital_signature") @db.Text      // RSA sig base64
+  canonicalData   Json      @map("canonical_data")                  // Données signées
+
+  // Métadonnées
+  issuedAt        DateTime  @default(now()) @map("issued_at") @db.Timestamptz
+  expiresAt       DateTime? @map("expires_at") @db.Timestamptz
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz
+  revocationReason String?  @map("revocation_reason") @db.Text
+
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  student          User              @relation("StudentCertificates", fields: [studentId], references: [id], onDelete: Restrict)
+  issuer           User              @relation("IssuerCertificates", fields: [issuedBy], references: [id])
+  institution      Institution       @relation(fields: [institutionId], references: [id], onDelete: Restrict)
+  keyPair          KeyPair           @relation(fields: [keyPairId], references: [id])
+  verificationLogs VerificationLog[]
+
+  @@index([certificateUid])
+  @@index([studentId])
+  @@index([institutionId])
+  @@map("certificates")
+}
+
+// ────────────────────────────────────────────────────────────────
+// VerificationLog — Journal immuable de chaque vérification
+// ────────────────────────────────────────────────────────────────
+model VerificationLog {
+  id             String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  certificateId  String?            @map("certificate_id") @db.Uuid
+  certificateUid String?            @map("certificate_uid") @db.VarChar(12)
+  method         VerificationMethod
+  result         VerificationResult
+  ipAddress      String?            @map("ip_address") @db.VarChar(45) // IPv6 max length
+  userAgent      String?            @map("user_agent") @db.Text
+  metadata       Json?
+  verifiedAt     DateTime           @default(now()) @map("verified_at") @db.Timestamptz
+
+  certificate Certificate? @relation(fields: [certificateId], references: [id], onDelete: SetNull)
+
+  @@index([certificateId])
+  @@index([verifiedAt(sort: Desc)])
+  @@map("verification_logs")
+}
+
+enum VerificationMethod {
+  id_lookup
+  qr_scan
+  file_upload
+  api
+
+  @@map("verification_method")
+}
+
+enum VerificationResult {
+  valid
+  invalid
+  revoked
+  expired
+  not_found
+
+  @@map("verification_result")
+}
+
+// ────────────────────────────────────────────────────────────────
+// AuditTrail — Log immutable de toutes les actions sensibles
+// ────────────────────────────────────────────────────────────────
+model AuditTrail {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String?  @map("user_id") @db.Uuid
+  action       String   @db.VarChar(100) // ex: 'certificate.issued'
+  resourceType String?  @map("resource_type") @db.VarChar(50)
+  resourceId   String?  @map("resource_id") @db.Uuid
+  details      Json?
+  ipAddress    String?  @map("ip_address") @db.VarChar(45)
+  performedAt  DateTime @default(now()) @map("performed_at") @db.Timestamptz
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([action])
+  @@index([performedAt(sort: Desc)])
+  @@map("audit_trail")
+}

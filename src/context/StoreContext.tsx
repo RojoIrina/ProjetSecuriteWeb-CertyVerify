@@ -1,139 +1,271 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { User, Module, Certificate } from '../types';
+// ================================================================
+// STORE CONTEXT — Migrated from localStorage to API backend
+// All state now comes from the CertiVerify Express API
+// ================================================================
+import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import {
+  loginApi, logoutApi, getProfileApi,
+  listUsersApi, createUserApi, deleteUserApi,
+  listModulesApi, createModuleApi, deleteModuleApi,
+  listCertificatesApi, issueCertificateApi,
+  toggleModuleApi, verifyCertificateApi,
+  setTokens, clearTokens, getAccessToken,
+  type AuthUser, type VerifyResult,
+} from '../services/api';
+
+// ─── Types ───
+
+export interface User {
+  id: string;
+  fullName: string;
+  email: string;
+  role: 'admin' | 'student' | 'verifier';
+  isActive: boolean;
+  institutionId: string | null;
+  institution?: { id: string; name: string } | null;
+  userModules?: { moduleId: string; status: string; completedAt: string | null; module: { id: string; title: string } }[];
+  completedModules?: string[];
+}
+
+export interface Module {
+  id: string;
+  title: string;
+  description: string | null;
+  creditHours: number;
+  isActive: boolean;
+}
+
+export interface Certificate {
+  id: string;
+  certificateUid: string;
+  studentId: string;
+  studentName: string;
+  title: string;
+  documentHash: string;
+  issuedAt: string;
+  revokedAt: string | null;
+  qrPayload?: string;
+  student?: { id: string; fullName: string; email: string };
+  institution?: { id: string; name: string };
+}
 
 interface StoreContextType {
+  // State
   users: User[];
-  setUsers: React.Dispatch<React.SetStateAction<User[]>>;
   modules: Module[];
-  setModules: React.Dispatch<React.SetStateAction<Module[]>>;
   certificates: Certificate[];
-  currentUser: User | null;
-  setCurrentUser: (user: User | null) => void;
-  login: (email: string, password?: string) => User | null;
+  currentUser: (User & { role: string }) | null;
+  isLoading: boolean;
+  error: string | null;
+
+  // Auth
+  login: (email: string, password: string) => Promise<User | null>;
   logout: () => void;
-  toggleModuleCompletion: (userId: string, moduleId: string) => void;
-  issueCertificate: (student: User) => Certificate;
+
+  // Users (admin)
+  refreshUsers: () => Promise<void>;
+  addUser: (data: { email: string; fullName: string; role: string }) => Promise<{ user: User; temporaryPassword: string } | null>;
+  removeUser: (id: string) => Promise<void>;
+
+  // Modules
+  refreshModules: () => Promise<void>;
+  addModule: (data: { title: string; description: string }) => Promise<Module | null>;
+  removeModule: (id: string) => Promise<void>;
+
+  // Certificates
+  refreshCertificates: () => Promise<void>;
+  issueCertificate: (student: User) => Promise<Certificate | null>;
+  verifyCertificate: (uid: string, qrSig?: string) => Promise<VerifyResult | null>;
+
+  // Student
+  toggleModuleCompletion: (userId: string, moduleId: string) => Promise<void>;
+
+  // Legacy compatibility
+  setUsers: React.Dispatch<React.SetStateAction<User[]>>;
+  setModules: React.Dispatch<React.SetStateAction<Module[]>>;
+  setCurrentUser: (user: any | null) => void;
 }
 
 const StoreContext = createContext<StoreContextType | undefined>(undefined);
 
-const INITIAL_MODULES: Module[] = [
-  { id: '1', title: 'Fondamentaux de la Cybersécurité', description: 'Apprenez les bases de la protection des données.' },
-  { id: '2', title: 'Développement Web Moderne', description: 'Maîtrisez React et Node.js.' },
-  { id: '3', title: 'Intelligence Artificielle', description: 'Introduction aux réseaux de neurones.' },
-];
-
-const INITIAL_USERS: User[] = [
-  { id: 'admin-1', name: 'Admin Principal', email: 'admin@certiverify.com', password: 'admin', role: 'admin', completedModules: [] },
-  { id: 'student-1', name: 'Jean Dupont', email: 'jean@student.com', password: 'password', role: 'student', completedModules: [] },
-];
-
-const INITIAL_CERTIFICATES: Certificate[] = [
-  {
-    id: 'WF6FOFBPV',
-    studentId: 'student-1',
-    studentName: 'mimiaou',
-    issueDate: '24/04/2026',
-    hash: 'a3R3M3NxcnZ2LTE3'
-  },
-  {
-    id: '3OWSX6ULH',
-    studentId: 'student-1',
-    studentName: 'Jean Dupont',
-    issueDate: '15/02/2026',
-    hash: 'H4SH-SC-3OWSX6ULH'
-  },
-  {
-    id: 'X7Y2Z9W4Q',
-    studentId: 'student-2',
-    studentName: 'Marie Curie',
-    issueDate: '20/03/2026',
-    hash: 'CRYPTO-MARIE-X7Y2Z9W4Q'
-  }
-];
-
 export const StoreProvider = ({ children }: { children: ReactNode }) => {
-  const [users, setUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem('cv_users');
-    if (!saved) return INITIAL_USERS;
-    const parsed: User[] = JSON.parse(saved);
-    const merged = [...parsed];
-    INITIAL_USERS.forEach(initialUser => {
-      const index = merged.findIndex(u => u.email === initialUser.email);
-      if (index === -1) merged.push(initialUser);
-      else if (!merged[index].password) merged[index] = { ...merged[index], password: initialUser.password };
-    });
-    return merged;
-  });
+  const [users, setUsers] = useState<User[]>([]);
+  const [modules, setModules] = useState<Module[]>([]);
+  const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const [modules, setModules] = useState<Module[]>(() => {
-    const saved = localStorage.getItem('cv_modules');
-    return saved ? JSON.parse(saved) : INITIAL_MODULES;
-  });
-
-  const [certificates, setCertificates] = useState<Certificate[]>(() => {
-    const saved = localStorage.getItem('cv_certificates');
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      // Ensure our initial ones are also there if they were missing or if it's the first time
-      return parsed.length > 0 ? parsed : INITIAL_CERTIFICATES;
-    }
-    return INITIAL_CERTIFICATES;
-  });
-
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('cv_current_user');
-    return saved ? JSON.parse(saved) : null;
-  });
-
-  useEffect(() => { localStorage.setItem('cv_users', JSON.stringify(users)); }, [users]);
-  useEffect(() => { localStorage.setItem('cv_modules', JSON.stringify(modules)); }, [modules]);
-  useEffect(() => { localStorage.setItem('cv_certificates', JSON.stringify(certificates)); }, [certificates]);
+  // ─── Bootstrap: check for saved session ───
   useEffect(() => {
-    if (currentUser) localStorage.setItem('cv_current_user', JSON.stringify(currentUser));
-    else localStorage.removeItem('cv_current_user');
-  }, [currentUser]);
+    const savedToken = sessionStorage.getItem('cv_access_token');
+    const savedRefresh = sessionStorage.getItem('cv_refresh_token');
+    if (savedToken && savedRefresh) {
+      setTokens(savedToken, savedRefresh);
+      // Fetch profile to restore session
+      getProfileApi().then(res => {
+        if (res.success && res.data) {
+          setCurrentUser(res.data as User);
+        } else {
+          clearTokens();
+          sessionStorage.removeItem('cv_access_token');
+          sessionStorage.removeItem('cv_refresh_token');
+        }
+      });
+    }
+  }, []);
 
-  const login = (email: string, password?: string) => {
-    const user = users.find(u => u.email === email && (!password || u.password === password));
-    if (user) {
-      setCurrentUser(user);
-      return user;
+  // ─── Load data when user is authenticated ───
+  useEffect(() => {
+    if (currentUser) {
+      refreshModules();
+      refreshCertificates();
+      if (currentUser.role === 'admin') {
+        refreshUsers();
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id]);
+
+  // ─── Auth ───
+
+  const login = async (email: string, password: string): Promise<User | null> => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const res = await loginApi(email, password);
+      if (res.success && res.data) {
+        // Save tokens for session persistence
+        sessionStorage.setItem('cv_access_token', res.data.accessToken);
+        sessionStorage.setItem('cv_refresh_token', res.data.refreshToken);
+
+        // Fetch full profile
+        const profileRes = await getProfileApi();
+        if (profileRes.success && profileRes.data) {
+          const user = profileRes.data as User;
+          setCurrentUser(user);
+          return user;
+        }
+      }
+      if (res.error) setError(res.error);
+      return null;
+    } catch {
+      setError('Erreur de connexion au serveur');
+      return null;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const logout = () => {
+    logoutApi().catch(() => {}); // Fire and forget
+    clearTokens();
+    sessionStorage.removeItem('cv_access_token');
+    sessionStorage.removeItem('cv_refresh_token');
+    setCurrentUser(null);
+    setUsers([]);
+    setCertificates([]);
+  };
+
+  // ─── Users ───
+
+  const refreshUsers = useCallback(async () => {
+    const res = await listUsersApi();
+    if (res.success && res.data) {
+      setUsers(res.data.map(mapUser));
+    }
+  }, []);
+
+  const addUser = async (data: { email: string; fullName: string; role: string }) => {
+    const res = await createUserApi({ ...data, role: data.role });
+    if (res.success && res.data) {
+      refreshUsers();
+      return res.data as { user: User; temporaryPassword: string };
     }
     return null;
   };
 
-  const logout = () => setCurrentUser(null);
-
-  const toggleModuleCompletion = (userId: string, moduleId: string) => {
-    setUsers(prev => prev.map(u => {
-      if (u.id === userId) {
-        const completed = u.completedModules.includes(moduleId)
-          ? u.completedModules.filter(id => id !== moduleId)
-          : [...u.completedModules, moduleId];
-        if (currentUser && currentUser.id === userId) setCurrentUser({...u, completedModules: completed});
-        return { ...u, completedModules: completed };
-      }
-      return u;
-    }));
+  const removeUser = async (id: string) => {
+    await deleteUserApi(id);
+    refreshUsers();
   };
 
-  const issueCertificate = (student: User) => {
-    const newCert: Certificate = {
-      id: Math.random().toString(36).substr(2, 9).toUpperCase(),
+  // ─── Modules ───
+
+  const refreshModules = useCallback(async () => {
+    const res = await listModulesApi();
+    if (res.success && res.data) {
+      setModules(res.data as Module[]);
+    }
+  }, []);
+
+  const addModule = async (data: { title: string; description: string }) => {
+    const res = await createModuleApi(data);
+    if (res.success && res.data) {
+      refreshModules();
+      return res.data as Module;
+    }
+    return null;
+  };
+
+  const removeModule = async (id: string) => {
+    await deleteModuleApi(id);
+    refreshModules();
+  };
+
+  // ─── Certificates ───
+
+  const refreshCertificates = useCallback(async () => {
+    const res = await listCertificatesApi(
+      currentUser?.role === 'student' ? { studentId: currentUser.id } : undefined
+    );
+    if (res.success && res.data) {
+      setCertificates(res.data as Certificate[]);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, currentUser?.role]);
+
+  const issueCert = async (student: User): Promise<Certificate | null> => {
+    const res = await issueCertificateApi({
       studentId: student.id,
-      studentName: student.name,
-      issueDate: new Date().toLocaleDateString(),
-      hash: btoa(`${student.id}-${Date.now()}`).substr(0, 16)
-    };
-    setCertificates(prev => [...prev, newCert]);
-    return newCert;
+      title: 'Architecture & Sécurité des Systèmes Numériques',
+    });
+    if (res.success && res.data) {
+      refreshCertificates();
+      return res.data as Certificate;
+    }
+    return null;
+  };
+
+  const verifyCert = async (uid: string, qrSig?: string): Promise<VerifyResult | null> => {
+    const res = await verifyCertificateApi(uid, qrSig);
+    if (res.success && res.data) {
+      return res.data;
+    }
+    return null;
+  };
+
+  // ─── Student Module Toggle ───
+
+  const toggleModuleCompletion = async (userId: string, moduleId: string) => {
+    await toggleModuleApi(userId, moduleId);
+    // Refresh user profile to get updated completedModules
+    const profileRes = await getProfileApi();
+    if (profileRes.success && profileRes.data) {
+      setCurrentUser(profileRes.data as User);
+    }
+    if (currentUser?.role === 'admin') refreshUsers();
   };
 
   return (
     <StoreContext.Provider value={{
-      users, setUsers, modules, setModules, certificates, currentUser, setCurrentUser,
-      login, logout, toggleModuleCompletion, issueCertificate
+      users, modules, certificates, currentUser: currentUser as any, isLoading, error,
+      login, logout,
+      refreshUsers, addUser, removeUser,
+      refreshModules, addModule, removeModule,
+      refreshCertificates, issueCertificate: issueCert, verifyCertificate: verifyCert,
+      toggleModuleCompletion,
+      setUsers, setModules, setCurrentUser,
     }}>
       {children}
     </StoreContext.Provider>
@@ -145,3 +277,14 @@ export const useStore = () => {
   if (!context) throw new Error('useStore must be used within StoreProvider');
   return context;
 };
+
+// ─── Helpers ───
+
+function mapUser(u: any): User {
+  return {
+    ...u,
+    completedModules: u.userModules
+      ?.filter((um: any) => um.status === 'completed')
+      .map((um: any) => um.moduleId) ?? [],
+  };
+}

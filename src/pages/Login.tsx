@@ -14,26 +14,27 @@ export default function Login() {
   const { login } = useStore();
   const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
     setIsLoading(true);
     
-    // Simulate network delay
-    setTimeout(() => {
-      const loggedUser = login(email, password);
+    try {
+      const loggedUser = await login(email, password);
       if (loggedUser) {
         if (loggedUser.role === role) {
           navigate(role === 'admin' ? '/admin' : '/student');
         } else {
           setError(`Compte trouvé, mais ce n'est pas un compte ${role === 'admin' ? 'Administrateur' : 'Étudiant'}.`);
-          setIsLoading(false);
         }
       } else {
         setError('Email ou mot de passe incorrect. Vérifiez vos identifiants.');
-        setIsLoading(false);
       }
-    }, 800);
+    } catch {
+      setError('Erreur de connexion au serveur. Vérifiez que le backend est lancé.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -133,7 +134,7 @@ export default function Login() {
           <p className="mb-2">Identification de test ({role === 'admin' ? 'Admin' : 'Étudiant'}) :</p>
           <div className="font-mono bg-slate-50 p-3 rounded-xl border border-slate-100 inline-block text-left">
             <p><span className="text-slate-300">Email:</span> {role === 'admin' ? 'admin@certiverify.com' : 'jean@student.com'}</p>
-            <p><span className="text-slate-300">Pass:</span> {role === 'admin' ? 'admin' : 'password'}</p>
+            <p><span className="text-slate-300">Pass:</span> {role === 'admin' ? 'admin123' : 'student123'}</p>
           </div>
         </div>
       </motion.div>

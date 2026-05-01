@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Search, CheckCircle, XCircle, ShieldCheck, Zap, Globe, Lock, ChevronRight, FileText, Star, Quote } from 'lucide-react';
+import { Search, CheckCircle, XCircle, ShieldCheck, Zap, Globe, Lock, ChevronRight, FileText, Quote } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '../hooks/useStore';
 import { useSearchParams, Link } from 'react-router-dom';
+import type { VerifyResult } from '../services/api';
 
 export default function Home() {
   const [certId, setCertId] = useState('');
@@ -10,11 +11,11 @@ export default function Home() {
   const [certData, setCertData] = useState<any>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
-  const { certificates } = useStore();
-  const [searchParams, setSearchParams] = useSearchParams();
+  const { verifyCertificate } = useStore();
+  const [searchParams] = useSearchParams();
 
-  const handleVerify = useCallback((id: string) => {
-    if (!id || id.trim().length < 8) return;
+  const handleVerify = useCallback(async (id: string, qrSig?: string) => {
+    if (!id || id.trim().length < 5) return;
     const targetId = id.trim().toUpperCase();
     
     setCertId(targetId);
@@ -22,26 +23,32 @@ export default function Home() {
     setVerificationResult('idle');
     setCertData(null);
     
-    // Slight delay to simulate security analysis
-    const timer = setTimeout(() => {
-      const cert = certificates.find(c => c.id === targetId);
-      if (cert) {
-        setCertData(cert);
+    try {
+      const result = await verifyCertificate(targetId, qrSig);
+      if (result && result.valid && result.certificate) {
+        setCertData(result.certificate);
         setVerificationResult('found');
       } else {
+        // Show revoked/expired info if available
+        if (result?.certificate) {
+          setCertData({ ...result.certificate, status: result.result });
+        }
         setVerificationResult('not_found');
       }
+    } catch {
+      setVerificationResult('not_found');
+    } finally {
       setIsVerifying(false);
-    }, 800);
-    return () => clearTimeout(timer);
-  }, [certificates]);
+    }
+  }, [verifyCertificate]);
 
   useEffect(() => {
-    const verifyId = searchParams.get('verify');
-    if (verifyId && certificates.length > 0) {
-      handleVerify(verifyId);
+    const verifyId = searchParams.get('verify') || searchParams.get('uid');
+    const sig = searchParams.get('sig');
+    if (verifyId) {
+      handleVerify(verifyId, sig || undefined);
     }
-  }, [searchParams, certificates.length, handleVerify]);
+  }, [searchParams, handleVerify]);
 
   const onDrop = async (e: React.DragEvent) => {
     e.preventDefault();
@@ -55,44 +62,23 @@ export default function Home() {
       setCertData(null);
 
       const reader = new FileReader();
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         const content = (event.target?.result as string) || '';
         const idRegex = /[A-Z0-9]{9}/; 
         
-        // Strategy: Look for any valid cert ID in filename or content
-        const foundInCollection = certificates.find(cert => 
-          file.name.toUpperCase().includes(cert.id) || 
-          content.toUpperCase().includes(cert.id)
-        );
-
-        setTimeout(() => {
-          if (foundInCollection) {
-            setCertId(foundInCollection.id);
-            setCertData(foundInCollection);
-            setVerificationResult('found');
-          } else {
-            // Fallback to regex match
-            const idMatch = file.name.toUpperCase().match(idRegex) || content.toUpperCase().match(idRegex);
-            const extractedId = idMatch ? idMatch[0] : null;
-            
-            if (extractedId) {
-              const cert = certificates.find(c => c.id === extractedId);
-              if (cert) {
-                setCertId(extractedId);
-                setCertData(cert);
-                setVerificationResult('found');
-              } else {
-                setVerificationResult('not_found');
-              }
-            } else {
-              setVerificationResult('not_found');
-            }
-          }
+        // Extract cert ID from filename or content
+        const idMatch = file.name.toUpperCase().match(idRegex) || content.toUpperCase().match(idRegex);
+        const extractedId = idMatch ? idMatch[0] : null;
+        
+        if (extractedId) {
+          await handleVerify(extractedId);
+        } else {
+          setVerificationResult('not_found');
           setIsVerifying(false);
-        }, 1500);
+        }
       };
 
-      reader.readAsText(file.slice(0, 30000)); // Read more to be safe
+      reader.readAsText(file.slice(0, 30000));
     }
   };
 
@@ -109,7 +95,7 @@ export default function Home() {
         >
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white border border-indigo-100 text-indigo-600 text-[10px] font-bold uppercase tracking-[0.2em] shadow-sm">
             <ShieldCheck className="w-3.5 h-3.5" />
-            Infrastructure d'Authentification Décentralisée
+            Infrastructure d'Authentification Sécurisée — RSA-2048 + SHA-256
           </div>
           
           <h1 className="text-7xl lg:text-8xl font-black tracking-tight text-slate-950 leading-[0.9] lg:leading-[0.85]">
@@ -133,7 +119,7 @@ export default function Home() {
             <div className="flex items-center justify-between">
               <div className="text-left">
                 <h2 className="text-sm font-bold text-slate-900 uppercase tracking-widest">Scanner de Certificats</h2>
-                <p className="text-xs text-slate-400 font-medium lowercase">Vérifiez l'authenticité d'un document Instantanément</p>
+                <p className="text-xs text-slate-400 font-medium lowercase">Vérification cryptographique RSA en temps réel</p>
               </div>
               <div className="flex gap-1">
                 <div className="w-2 h-2 rounded-full bg-slate-100" />
@@ -183,7 +169,7 @@ export default function Home() {
                 </div>
                 <div className="text-center space-y-1">
                   <p className="font-extrabold text-slate-800 text-lg">{isVerifying ? 'Extraction en cours...' : 'Déposez votre document PDF'}</p>
-                  <p className="text-xs text-slate-400 font-bold uppercase tracking-[0.2em]">{isVerifying ? 'Moteur de vision actif' : 'Recherche automatique de signature numérique'}</p>
+                  <p className="text-xs text-slate-400 font-bold uppercase tracking-[0.2em]">{isVerifying ? 'Vérification signature RSA' : 'Recherche automatique de signature numérique'}</p>
                 </div>
                 
                 {isVerifying && (
@@ -211,7 +197,7 @@ export default function Home() {
                   <div className="space-y-4 w-full">
                     <div className="flex justify-between items-start">
                       <div>
-                        <p className="font-black text-emerald-900 uppercase text-[10px] tracking-widest mb-1">Authenticité Confirmée</p>
+                        <p className="font-black text-emerald-900 uppercase text-[10px] tracking-widest mb-1">Authenticité Confirmée — Signature RSA Valide</p>
                         <h3 className="text-2xl font-black text-slate-900 leading-none">{certData?.studentName}</h3>
                       </div>
                       <div className="px-3 py-1 bg-emerald-500 text-white rounded-lg text-[9px] font-black uppercase tracking-wider">Certifié</div>
@@ -219,7 +205,7 @@ export default function Home() {
                     <div className="grid grid-cols-2 gap-4 pt-4 border-t border-emerald-100/50">
                       <div>
                         <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest">Émis le</p>
-                        <p className="text-sm font-bold text-slate-700">{certData?.issueDate}</p>
+                        <p className="text-sm font-bold text-slate-700">{certData?.issuedAt ? new Date(certData.issuedAt).toLocaleDateString('fr-FR') : ''}</p>
                       </div>
                       <div className="flex flex-col items-end">
                         <p className="text-[9px] font-bold text-emerald-600 uppercase tracking-widest mb-1">Actions</p>
@@ -248,8 +234,16 @@ export default function Home() {
                     <XCircle className="w-6 h-6" />
                   </div>
                   <div className="space-y-2">
-                    <p className="font-black text-rose-900 uppercase text-[10px] tracking-widest">Certification Introuvable</p>
-                    <p className="text-sm text-rose-800 font-medium">Ce document ne contient aucune signature numérique valide reconnue par nos services.</p>
+                    <p className="font-black text-rose-900 uppercase text-[10px] tracking-widest">
+                      {certData?.status === 'revoked' ? 'Certificat Révoqué' : certData?.status === 'expired' ? 'Certificat Expiré' : 'Certification Introuvable'}
+                    </p>
+                    <p className="text-sm text-rose-800 font-medium">
+                      {certData?.status === 'revoked'
+                        ? 'Ce certificat a été révoqué par l\'institution émettrice.'
+                        : certData?.status === 'expired'
+                        ? 'Ce certificat a dépassé sa date de validité.'
+                        : 'Ce document ne contient aucune signature numérique valide reconnue par nos services.'}
+                    </p>
                   </div>
                 </motion.div>
               )}
@@ -280,7 +274,7 @@ export default function Home() {
             </div>
             <div className="space-y-2">
               <h3 className="text-4xl font-black text-slate-900 tracking-tight">Vérification en temps réel</h3>
-              <p className="text-lg text-slate-500 font-medium max-w-md">Protocole SSL intégré pour une validation instantanée des hash numériques sans latence.</p>
+              <p className="text-lg text-slate-500 font-medium max-w-md">Signature RSA-2048 vérifiée côté serveur avec hash SHA-256 pour une validation instantanée et infalsifiable.</p>
             </div>
             <button className="flex items-center gap-2 text-indigo-600 font-bold group-hover:gap-4 transition-all">
               En savoir plus <ChevronRight className="w-4 h-4" />
@@ -305,17 +299,17 @@ export default function Home() {
             <ShieldCheck className="w-12 h-12 text-indigo-400" />
             <h3 className="text-3xl font-black tracking-tight leading-none">Sécurité Militaire</h3>
             <p className="text-slate-400 font-medium text-sm leading-relaxed">
-              Chaque certificat est haché en SHA-256 et signé numériquement, rendant toute altération impossible.
+              Chaque certificat est haché en SHA-256 et signé numériquement avec RSA-2048, rendant toute altération détectable.
             </p>
           </div>
           <div className="mt-8 pt-8 border-t border-slate-800 grid grid-cols-2 gap-4">
             <div>
-              <p className="text-2xl font-black">256-bit</p>
-              <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest text-wrap">Encryption active</p>
+              <p className="text-2xl font-black">RSA-2048</p>
+              <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest text-wrap">Signature active</p>
             </div>
             <div>
-              <p className="text-2xl font-black">Zéro</p>
-              <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">Faux document</p>
+              <p className="text-2xl font-black">SHA-256</p>
+              <p className="text-[10px] uppercase font-bold text-slate-500 tracking-widest">Hash intégrité</p>
             </div>
           </div>
         </div>
@@ -325,9 +319,9 @@ export default function Home() {
             <CheckCircle className="w-6 h-6" />
           </div>
           <div>
-            <h4 className="text-xl font-bold text-slate-900">QR Code Sécurisé</h4>
+            <h4 className="text-xl font-bold text-slate-900">QR Code Signé HMAC</h4>
             <p className="text-slate-500 text-sm">
-              Validation mobile via scan direct sans application tierce requise.
+              Validation mobile via QR code signé avec HMAC-SHA256 anti-falsification.
             </p>
           </div>
         </div>
@@ -358,9 +352,9 @@ export default function Home() {
         </div>
         <div className="col-span-12 lg:col-span-4 bg-indigo-600 rounded-[2.5rem] p-10 text-white relative overflow-hidden group">
           <Lock className="w-32 h-32 absolute -bottom-8 -right-8 opacity-10 group-hover:scale-110 transition-transform" />
-          <h4 className="text-xl font-bold mb-2">Confidentialité Totale</h4>
+          <h4 className="text-xl font-bold mb-2">Clé Privée Isolée</h4>
           <p className="text-indigo-100 text-sm leading-relaxed opacity-80">
-            Protocole Zero-Knowledge : nous vérifions sans jamais stocker vos données personnelles.
+            La clé de signature RSA est stockée dans un HSM isolé. Même un accès root ne permet pas l'extraction.
           </p>
         </div>
       </section>
@@ -369,18 +363,18 @@ export default function Home() {
       <section className="max-w-7xl mx-auto px-6 grid grid-cols-1 lg:grid-cols-3 gap-12 pt-12">
         <div className="space-y-4">
           <div className="text-4xl font-black text-slate-200">01</div>
-          <h4 className="text-2xl font-black text-slate-900">Signé par l'IA</h4>
-          <p className="text-slate-500 leading-relaxed">Notre moteur d'intelligence artificielle analyse la structure du document pour détecter toute anomalie physique ou numérique.</p>
+          <h4 className="text-2xl font-black text-slate-900">Signé par RSA-2048</h4>
+          <p className="text-slate-500 leading-relaxed">Chaque certificat est signé avec une clé RSA-2048 bits de l'institution, puis vérifié par sa clé publique — un standard utilisé par TLS et X.509.</p>
         </div>
         <div className="space-y-4">
           <div className="text-4xl font-black text-slate-200">02</div>
           <h4 className="text-2xl font-black text-slate-900">Preuve immuable</h4>
-          <p className="text-slate-500 leading-relaxed">Une fois émis, le certificat est ancré dans notre archi-numérique, rendant sa modification impossible, même par nous.</p>
+          <p className="text-slate-500 leading-relaxed">Le hash SHA-256 du contenu canonique est stocké en base. Toute modification, même d'un seul caractère, produit un hash complètement différent.</p>
         </div>
         <div className="space-y-4">
           <div className="text-4xl font-black text-slate-200">03</div>
-          <h4 className="text-2xl font-black text-slate-900">Interopérable</h4>
-          <p className="text-slate-500 leading-relaxed">Compatible avec les standards Européens de certification numérique et les protocoles de confiance académique.</p>
+          <h4 className="text-2xl font-black text-slate-900">Audit complet</h4>
+          <p className="text-slate-500 leading-relaxed">Chaque vérification est loguée avec IP, timestamp et méthode. Un journal immuable assure la traçabilité de toutes les opérations.</p>
         </div>
       </section>
 
@@ -400,4 +394,3 @@ export default function Home() {
     </div>
   );
 }
-
