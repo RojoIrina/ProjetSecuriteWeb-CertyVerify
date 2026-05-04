@@ -102,7 +102,11 @@ model Module {
   institutionId String   @map("institution_id") @db.Uuid
   title         String   @db.VarChar(255)
   description   String?  @db.Text
+  content       String   @default("") @db.Text
   creditHours   Int      @default(0) @map("credit_hours")
+  order         Int      @default(0)
+  duration      Int      @default(0)
+  isRequired    Boolean  @default(true) @map("is_required")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt     DateTime @updatedAt @map("updated_at") @db.Timestamptz
@@ -111,6 +115,7 @@ model Module {
   userModules UserModule[]
 
   @@index([institutionId])
+  @@index([institutionId, order])
   @@map("modules")
 }
 
