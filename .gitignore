@@ -4,7 +4,12 @@ dist/
 coverage/
 .DS_Store
 *.log
-.env*
-server/keys/
-node_modules
-node_modules
+
+# Secrets — JAMAIS committés
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example
+server/keys/*.pem

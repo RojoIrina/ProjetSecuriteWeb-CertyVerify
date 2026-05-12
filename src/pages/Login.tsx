@@ -130,15 +130,7 @@ export default function Login() {
           </button>
         </form>
 
-        {import.meta.env.DEV && (
-        <div className="text-center text-xs text-slate-400 border-t border-slate-50 pt-6">
-          <p className="mb-2">Identification de test ({role === 'admin' ? 'Admin' : 'Étudiant'}) :</p>
-          <div className="font-mono bg-slate-50 p-3 rounded-xl border border-slate-100 inline-block text-left">
-            <p><span className="text-slate-300">Email:</span> {role === 'admin' ? 'admin@certiverify.com' : 'jean@student.com'}</p>
-            <p><span className="text-slate-300">Pass:</span> {role === 'admin' ? 'admin123' : 'student123'}</p>
-          </div>
-        </div>
-        )}
+
       </motion.div>
     </div>
   );

@@ -1,11 +1,10 @@
 // ================================================================
 // ERROR HANDLER — Global Express error middleware
-// Catches all errors, returns structured JSON responses
-// Hides stack traces in production
+// FIX faille #12 — Ne jamais exposer stack traces ni détails internes
+// Les erreurs sont loguées côté serveur uniquement
 // ================================================================
 import { Request, Response, NextFunction } from 'express';
 import { AppError } from '../errors/AppError.js';
-import { env } from '../config/env.js';
 
 export function errorHandler(
   err: Error,
@@ -13,10 +12,9 @@ export function errorHandler(
   res: Response,
   _next: NextFunction
 ): void {
-  // Log all errors
-  console.error(`[ERROR] ${err.message}`, {
-    name: err.name,
-    stack: env.NODE_ENV === 'development' ? err.stack : undefined,
+  // Logger TOUT côté serveur (stack trace comprise)
+  console.error(`[ERROR] ${err.name}: ${err.message}`, {
+    stack: err.stack,
   });
 
   // Known operational errors (expected, handled)
@@ -35,13 +33,9 @@ export function errorHandler(
     return;
   }
 
-  // Unknown errors (bugs) — never expose details in production
+  // Unknown errors (bugs) — JAMAIS exposer les détails, même en développement
   res.status(500).json({
     success: false,
-    error:
-      env.NODE_ENV === 'production'
-        ? 'Erreur interne du serveur'
-        : err.message,
-    ...(env.NODE_ENV === 'development' && { stack: err.stack }),
+    error: 'Erreur interne du serveur',
   });
 }

@@ -49,8 +49,9 @@ model User {
   createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz
   updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
-  // Refresh token for JWT rotation
-  refreshToken  String?   @map("refresh_token") @db.VarChar(512)
+  // FIX faille #13 — Refresh token avec expiration côté serveur
+  refreshToken          String?   @map("refresh_token") @db.VarChar(512)
+  refreshTokenExpiresAt DateTime? @map("refresh_token_expires_at") @db.Timestamptz
 
   institution          Institution?  @relation(fields: [institutionId], references: [id], onDelete: SetNull)
   userModules          UserModule[]

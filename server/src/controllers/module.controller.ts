@@ -26,7 +26,12 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
 
 export async function create(req: Request, res: Response, next: NextFunction) {
   try {
-    const institutionId = req.body.institutionId || req.user!.institutionId;
+    // FIX faille #7 — Toujours forcer l'institution de l'admin connecté
+    const institutionId = req.user!.institutionId;
+    if (!institutionId) {
+      res.status(403).json({ success: false, error: 'Admin sans institution associée' });
+      return;
+    }
     const mod = await moduleService.createModule({
       ...req.body,
       institutionId,
@@ -107,21 +112,22 @@ export async function enroll(req: Request, res: Response, next: NextFunction) {
 
 export async function complete(req: Request, res: Response, next: NextFunction) {
   try {
-    if (req.user!.role !== 'student') {
-      res.status(403).json({ success: false, error: 'Seul un étudiant peut valider son propre cours' });
+    // FIX faille #5 — Seul un admin peut valider la complétion d'un module
+    // Le studentId doit être explicitement fourni dans le body
+    const { studentId } = req.body;
+    if (!studentId) {
+      res.status(400).json({ success: false, error: 'studentId requis dans le body' });
       return;
     }
 
-    const userId = req.user!.id;
     const moduleId = req.params.id;
-
-    const result = await moduleService.completeModule(userId, moduleId, req.user!.id);
+    const result = await moduleService.completeModule(studentId, moduleId, req.user!.id);
 
     await auditService.logAudit({
       userId: req.user!.id,
       action: 'module.completed',
       resourceType: 'user_module',
-      details: { moduleId, studentId: userId },
+      details: { moduleId, studentId, approvedBy: req.user!.id },
       ipAddress: req.ip,
     });
 

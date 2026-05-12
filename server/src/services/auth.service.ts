@@ -23,6 +23,9 @@ import type { UserRole } from '@prisma/client';
 // Load RSA keys at startup
 const JWT_PRIVATE_KEY = fs.readFileSync(path.resolve(env.JWT_PRIVATE_KEY_PATH), 'utf-8');
 
+// FIX faille #13 — Durée de vie du refresh token (7 jours) avec expiration côté serveur
+const REFRESH_TOKEN_DURATION_MS = 7 * 24 * 60 * 60 * 1000;
+
 /**
  * Hash a password with bcrypt.
  *
@@ -116,10 +119,11 @@ export async function login(email: string, password: string): Promise<TokenPair 
 
   const refreshToken = generateRefreshToken();
 
-  // Update last login and refresh token
+  // Update last login, refresh token + expiry (FIX faille #13)
   await userRepo.update(user.id, {
     lastLoginAt: new Date(),
     refreshToken: hashRefreshToken(refreshToken),
+    refreshTokenExpiresAt: new Date(Date.now() + REFRESH_TOKEN_DURATION_MS),
   });
 
   const authUser: AuthUser = {
@@ -145,10 +149,17 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenPai
     throw new UnauthorizedError('Refresh token invalide ou expiré');
   }
 
+  // FIX faille #13 — Vérifier l'expiration côté serveur
+  if (user.refreshTokenExpiresAt && user.refreshTokenExpiresAt < new Date()) {
+    await userRepo.update(user.id, { refreshToken: null, refreshTokenExpiresAt: null });
+    throw new UnauthorizedError('Refresh token expiré. Veuillez vous reconnecter.');
+  }
+
   // Rotate refresh token (one-time use)
   const newRefreshToken = generateRefreshToken();
   await userRepo.update(user.id, {
     refreshToken: hashRefreshToken(newRefreshToken),
+    refreshTokenExpiresAt: new Date(Date.now() + REFRESH_TOKEN_DURATION_MS),
   });
 
   const authUser: AuthUser = {
@@ -165,7 +176,8 @@ export async function refreshAccessToken(refreshToken: string): Promise<TokenPai
 }
 
 export async function logout(userId: string): Promise<void> {
-  await userRepo.update(userId, { refreshToken: null });
+  // FIX faille #13 — Effacer aussi la date d'expiration
+  await userRepo.update(userId, { refreshToken: null, refreshTokenExpiresAt: null });
 }
 
 export async function getUserProfile(userId: string) {

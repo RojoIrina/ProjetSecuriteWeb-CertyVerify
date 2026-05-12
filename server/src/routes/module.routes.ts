@@ -59,7 +59,7 @@ router.delete('/:id', requireRole('admin'), validate({ params: uuidParam }), mod
 // POST   /api/modules/:id/enroll  — Student enrolls in a module
 router.post('/:id/enroll', validate({ params: uuidParam }), moduleController.enroll);
 
-// POST   /api/modules/:id/complete — Authenticated student marks own enrolled module complete
-router.post('/:id/complete', validate({ params: uuidParam }), moduleController.complete);
+// POST   /api/modules/:id/complete — Admin valide la complétion (FIX faille #5)
+router.post('/:id/complete', requireRole('admin'), validate({ params: uuidParam }), moduleController.complete);
 
 export default router;

@@ -162,7 +162,7 @@ export function generateSecureQRPayload(
     .createHmac('sha256', env.QR_HMAC_SECRET)
     .update(certificateUid)
     .digest('hex')
-    .substring(0, 16);
+    .substring(0, 32); // 128 bits (était 64 bits — fix faille #11)
 
   return `${appUrl}/verify?uid=${certificateUid}&sig=${hmac}`;
 }
@@ -186,7 +186,7 @@ export function verifyQRSignature(uid: string, sig: string): boolean {
       .createHmac('sha256', env.QR_HMAC_SECRET)
       .update(uid)
       .digest('hex')
-      .substring(0, 16);
+      .substring(0, 32); // 128 bits (fix faille #11)
 
     if (sig.length !== expected.length) return false;
 
@@ -210,15 +210,15 @@ export function verifyQRSignature(uid: string, sig: string): boolean {
  * This ensures that even if the certificate UID is public, only the student
  * (who knows the access key) can access the full PDF.
  *
- * The key is 16 hex characters (64 bits of entropy) — sufficient for
- * this use case since the endpoint is rate-limited.
+ * The key is 32 hex characters (128 bits of entropy).
+ * Uses a dedicated ACCESS_KEY_SECRET separate from QR_HMAC_SECRET (fix faille #8).
  */
 export function generateAccessKey(certificateUid: string, studentId: string): string {
   return crypto
-    .createHmac('sha256', env.QR_HMAC_SECRET)
+    .createHmac('sha256', env.ACCESS_KEY_SECRET) // Secret DÉDIÉ — fix faille #8
     .update(`${certificateUid}:${studentId}:access`)
     .digest('hex')
-    .substring(0, 16);
+    .substring(0, 32); // 128 bits au lieu de 64 — fix faille #11
 }
 
 /**

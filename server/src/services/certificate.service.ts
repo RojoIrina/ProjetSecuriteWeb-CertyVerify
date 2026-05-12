@@ -15,6 +15,7 @@ import * as moduleRepo from '../repositories/module.repository.js';
 import * as verificationRepo from '../repositories/verification.repository.js';
 import { ConflictError, NotFoundError, ValidationError, ForbiddenError } from '../errors/AppError.js';
 import * as cryptoService from './crypto.service.js';
+import { decryptPrivateKey } from './keyEncryption.service.js'; // FIX faille #3
 import type { CertificatePayload } from '../types/index.js';
 import type { Prisma } from '@prisma/client';
 import type { VerificationMethod, VerificationResult } from '@prisma/client';
@@ -78,7 +79,9 @@ export async function issueCertificate(params: {
   // 5. Canonicalize → Hash → Sign
   const canonicalJson = cryptoService.canonicalize(payload);
   const documentHash = cryptoService.hashDocument(canonicalJson);
-  const digitalSignature = cryptoService.signHash(documentHash, keyPair.privateKeyRef);
+  // FIX faille #3 — Déchiffrer la clé privée avant utilisation (jamais utilisée en clair depuis la DB)
+  const decryptedPrivateKey = decryptPrivateKey(keyPair.privateKeyRef);
+  const digitalSignature = cryptoService.signHash(documentHash, decryptedPrivateKey);
 
   // 6. Generate student access key (HMAC-derived secret)
   const accessKey = cryptoService.generateAccessKey(certificateUid, student.id);

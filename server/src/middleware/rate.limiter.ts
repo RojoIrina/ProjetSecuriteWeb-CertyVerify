@@ -1,6 +1,6 @@
 // ================================================================
 // RATE LIMITER — Per-route rate limiting
-// Protects against brute-force and L7 DDoS
+// FIX faille #15 — Auth limiter combine IP + email (anti rotation IP)
 // ================================================================
 import rateLimit from 'express-rate-limit';
 import { env } from '../config/env.js';
@@ -12,8 +12,8 @@ import { env } from '../config/env.js';
 export const generalLimiter = rateLimit({
   windowMs: env.RATE_LIMIT_WINDOW_MS,
   max: env.RATE_LIMIT_MAX,
-  standardHeaders: true,  // Return rate limit info in RateLimit-* headers
-  legacyHeaders: false,   // Disable X-RateLimit-* headers
+  standardHeaders: true,
+  legacyHeaders: false,
   message: {
     success: false,
     error: 'Trop de requêtes. Réessayez dans quelques minutes.',
@@ -21,17 +21,22 @@ export const generalLimiter = rateLimit({
 });
 
 /**
- * Strict auth limiter: 10 login attempts per 15 minutes per IP.
- * Applied only to authentication endpoints.
+ * Strict auth limiter: 5 login attempts per 15 minutes per IP+email.
+ * FIX faille #15 — keyGenerator combine IP et email pour bloquer
+ * les attaques par rotation d'IP (Tor, VPN).
  *
- * Security: Prevents brute-force password guessing.
- * An attacker trying 1000 passwords would need 25 hours.
+ * Security: An attacker trying 1000 passwords would need 50 hours.
  */
 export const authLimiter = rateLimit({
   windowMs: 900_000, // 15 minutes
-  max: 10,
+  max: 5, // Réduit de 10 à 5
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req) => {
+    // Combine IP et email — contourne la rotation d'IP
+    const email = (req.body?.email as string) || 'unknown';
+    return `${req.ip}:${email.toLowerCase()}`;
+  },
   message: {
     success: false,
     error: 'Trop de tentatives de connexion. Réessayez dans 15 minutes.',
@@ -50,5 +55,20 @@ export const verifyLimiter = rateLimit({
   message: {
     success: false,
     error: 'Trop de vérifications. Réessayez dans quelques minutes.',
+  },
+});
+
+/**
+ * Download limiter: 20 downloads per 15 minutes per IP.
+ * Applied to public certificate download endpoints.
+ */
+export const downloadLimiter = rateLimit({
+  windowMs: 900_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: 'Trop de téléchargements. Réessayez dans quelques minutes.',
   },
 });

@@ -10,9 +10,15 @@ import { env } from '../config/env.js';
 
 export async function issue(req: Request, res: Response, next: NextFunction) {
   try {
+    // FIX faille #7 — Toujours forcer l'institutionId de l'admin connecté
+    const institutionId = req.user!.institutionId;
+    if (!institutionId) {
+      res.status(403).json({ success: false, error: 'Admin sans institution associée' });
+      return;
+    }
     const cert = await certificateService.issueCertificate({
       studentId: req.body.studentId,
-      institutionId: req.body.institutionId || req.user!.institutionId!,
+      institutionId,
       issuedBy: req.user!.id,
       title: req.body.title,
     });
@@ -71,9 +77,17 @@ export async function getById(req: Request, res: Response, next: NextFunction) {
   try {
     const cert = await certificateService.getCertificateById(req.params.id);
 
-    // Students can only see their own certificates
+    // FIX faille #6 — Contrôle d'accès strict par rôle
     if (req.user!.role === 'student' && cert.studentId !== req.user!.id) {
       res.status(403).json({ success: false, error: 'Accès interdit' });
+      return;
+    }
+
+    if (req.user!.role === 'verifier') {
+      // Les vérificateurs ne voient que les données publiques (sans clés ni signature brute)
+      const { accessKey: _a, digitalSignature: _d, canonicalData: _c, ...publicData } = cert as any;
+      const qrPayload = cryptoService.generateSecureQRPayload(cert.certificateUid, env.CORS_ORIGIN);
+      res.json({ success: true, data: { ...publicData, qrPayload } });
       return;
     }
 
@@ -94,8 +108,13 @@ export async function downloadPdf(req: Request, res: Response, next: NextFunctio
   try {
     const cert = await certificateService.getCertificateById(req.params.id);
 
+    // FIX faille #6 — Contrôle d'accès strict (student = son propre cert, verifier = interdit)
     if (req.user!.role === 'student' && cert.studentId !== req.user!.id) {
       res.status(403).json({ success: false, error: 'Accès interdit' });
+      return;
+    }
+    if (req.user!.role === 'verifier') {
+      res.status(403).json({ success: false, error: 'Téléchargement PDF non autorisé pour ce rôle' });
       return;
     }
 

@@ -6,13 +6,14 @@ import { z } from 'zod';
 import * as certificateController from '../controllers/certificate.controller.js';
 import { requireAuth, requireRole } from '../middleware/auth.guard.js';
 import { validate } from '../middleware/validate.js';
+import { downloadLimiter } from '../middleware/rate.limiter.js';
 
 const router = Router();
 
-// ─── Public route (no auth) ───
-// GET /api/certificates/:uid/download?key=... — Download with access key
-router.get('/:uid/download', certificateController.download);
-router.get('/:uid/download.pdf', certificateController.downloadPublicPdf);
+// ─── Public routes (no auth) ───
+// GET /api/certificates/:uid/download?key=... — Download with access key (rate limited)
+router.get('/:uid/download', downloadLimiter, certificateController.download);
+router.get('/:uid/download.pdf', downloadLimiter, certificateController.downloadPublicPdf);
 
 // ─── Protected routes ───
 router.use(requireAuth);

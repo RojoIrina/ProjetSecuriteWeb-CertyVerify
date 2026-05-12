@@ -19,6 +19,7 @@ const envSchema = z.object({
   // Security
   BCRYPT_ROUNDS: z.coerce.number().min(10).max(14).default(12),
   QR_HMAC_SECRET: z.string().min(32),
+  ACCESS_KEY_SECRET: z.string().min(32), // Secret dédié pour les access keys (séparé du HMAC QR)
   CORS_ORIGIN: z.string().default('http://localhost:3000'),
 
   // Rate limiting

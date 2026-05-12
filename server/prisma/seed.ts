@@ -46,8 +46,9 @@ async function main() {
   });
   console.log(`✅ RSA-2048 Key Pair generated (${keyPair.id})`);
 
-  // 3. Create admin user (password: "admin123")
-  const adminPassword = await bcrypt.hash('admin123', 12);
+  // 3. Create admin user — FIX faille #4: mot de passe aléatoire fort
+  const adminTempPass = crypto.randomBytes(16).toString('base64url');
+  const adminPassword = await bcrypt.hash(adminTempPass, 12);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@certiverify.com' },
     update: {
@@ -66,10 +67,13 @@ async function main() {
       isActive: true,
     },
   });
-  console.log(`✅ Admin: ${admin.email} (password: admin123)`);
+  console.log(`✅ Admin: ${admin.email}`);
+  console.log(`   🔑 Mot de passe temporaire admin: ${adminTempPass}`);
+  console.log('   ⚠️  CHANGER CE MOT DE PASSE APRÈS CONNEXION !');
 
-  // 4. Create sample student (password: "student123")
-  const studentPassword = await bcrypt.hash('student123', 12);
+  // 4. Create sample student — FIX faille #4: mot de passe aléatoire fort
+  const studentTempPass = crypto.randomBytes(16).toString('base64url');
+  const studentPassword = await bcrypt.hash(studentTempPass, 12);
   const student = await prisma.user.upsert({
     where: { email: 'jean@student.com' },
     update: {
@@ -88,7 +92,9 @@ async function main() {
       isActive: true,
     },
   });
-  console.log(`✅ Student: ${student.email} (password: student123)`);
+  console.log(`✅ Student: ${student.email}`);
+  console.log(`   🔑 Mot de passe temporaire étudiant: ${studentTempPass}`);
+  console.log('   ⚠️  CHANGER CE MOT DE PASSE APRÈS CONNEXION !');
 
   // 5. Create sample modules
   const modulesData = [
@@ -124,9 +130,9 @@ async function main() {
   console.log(`✅ Student enrolled in ${createdModules.length} modules (${2} completed)`);
 
   console.log('\n🎉 Seed complete!\n');
-  console.log('─── Test Credentials ───');
-  console.log('Admin:   admin@certiverify.com / admin123');
-  console.log('Student: jean@student.com / student123');
+  console.log('─── Comptes de test créés — Mots de passe affichés ci-dessus —───');
+  console.log('Admin:   admin@certiverify.com');
+  console.log('Student: jean@student.com');
 }
 
 main()
